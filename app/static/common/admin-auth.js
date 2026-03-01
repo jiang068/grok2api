@@ -190,7 +190,28 @@ function buildAuthHeaders(apiKey) {
   return apiKey ? { 'Authorization': apiKey } : {};
 }
 
-function logout() {
+async function checkAuth() {
+    try {
+        const response = await fetch('/api/v1/admin/check-auth', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin'
+        });
+        if (response.ok) {
+            const data = await response.json();
+            if (data.is_authed) {
+                return true;
+            }
+        }
+    } catch (error) {
+        console.error('Auth check failed', error);
+    }
+    window.location.href = '/login';
+}
+
+async function logout() {
   clearStoredAppKey();
   window.location.href = '/login';
 }

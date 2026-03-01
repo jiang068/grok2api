@@ -7,6 +7,7 @@ import uuid
 from typing import Dict
 
 import orjson
+import os
 from curl_cffi.requests import AsyncSession
 
 from app.core.logger import logger
@@ -41,7 +42,9 @@ class UsageService:
     """用量查询服务"""
     
     def __init__(self, proxy: str = None):
-        self.proxy = proxy or get_config("grok.base_proxy_url", "")
+        # Priority: explicit arg > config.grok.base_proxy_url > APP_PROXY_URL env > HTTP(S)_PROXY env
+        env_proxy = os.getenv("APP_PROXY_URL") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+        self.proxy = proxy or get_config("grok.base_proxy_url", "") or env_proxy or ""
         self.timeout = get_config("grok.timeout", TIMEOUT)
     
     def _build_headers(self, token: str) -> dict:

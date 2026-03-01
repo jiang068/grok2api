@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Optional, Set
 
-from fastapi import HTTPException, Security, status
+from fastapi import HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import get_config
@@ -85,6 +85,18 @@ async def _load_legacy_api_keys() -> Set[str]:
         _legacy_api_keys_cache = keys
         _legacy_api_keys_mtime = mtime
         return keys
+
+
+async def verify_admin_session(request: Request) -> None:
+    """
+    Verify admin session from cookie.
+    """
+    if "admin_authed" not in request.session:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 async def verify_api_key(

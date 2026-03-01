@@ -14,7 +14,11 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
 
+from app.core.config import get_config
 from app.core.logger import logger
+# NOTE: removed import of non-existent GrokClient to avoid ModuleNotFoundError
+
+# RegisterAction not used/available in this fork; removed import to avoid ImportError
 from app.services.register.services import (
     EmailService,
     TurnstileService,
@@ -90,12 +94,14 @@ class RegisterRunner:
         on_success: Optional[Callable[[str, str, str, int, int], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
         stop_event: Optional[threading.Event] = None,
+        proxy: str | None = None,
     ) -> None:
         self.target_count = max(1, int(target_count))
         self.thread_count = max(1, int(thread_count))
         self.on_success = on_success
         self.on_error = on_error
         self.stop_event = stop_event or threading.Event()
+        self.proxy = proxy
 
         self._post_lock = threading.Lock()
         self._result_lock = threading.Lock()
@@ -164,7 +170,10 @@ class RegisterRunner:
         logger.info("Register: initializing action config...")
         start_url = f"{SITE_URL}/sign-up"
 
-        with curl_requests.Session(impersonate=DEFAULT_IMPERSONATE) as session:
+        proxy_url = self.proxy or get_config("app.proxy_url")
+        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else {}
+
+        with curl_requests.Session(impersonate=DEFAULT_IMPERSONATE, proxies=proxies) as session:
             html = session.get(start_url, timeout=15).text
 
             key_match = re.search(r'sitekey":"(0x4[a-zA-Z0-9_-]+)"', html)
@@ -226,6 +235,13 @@ class RegisterRunner:
             self._record_error(f"verify code error: {email} - {exc}")
             return False
 
+    def _init_session(self) -> Session:
+        # _init_session is intentionally not implemented. The codebase uses
+        # `with curl_requests.Session(...)` directly in each worker thread.
+        # If a global session factory is desired, implement it using
+        # curl_requests.Session and provide proxies from config here.
+        raise NotImplementedError("_init_session is not implemented; use curl_requests.Session directly")
+
     def _register_single_thread(self) -> None:
         time.sleep(random.uniform(0, 5))
 
@@ -248,7 +264,7 @@ class RegisterRunner:
             try:
                 impersonate_fingerprint, account_user_agent = _random_chrome_profile()
 
-                with curl_requests.Session(impersonate=impersonate_fingerprint) as session:
+                with curl_requests.Session(impersonate=impersonate_fingerprint, proxies=proxies) as session:
                     try:
                         session.get(SITE_URL, timeout=10)
                     except Exception:

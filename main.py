@@ -17,9 +17,22 @@ env_file = Path(__file__).parent / ".env"
 if env_file.exists():
     load_dotenv(env_file)
 
-from fastapi import FastAPI, Request
+# If APP_PROXY_URL is set in .env, export it to common proxy env vars so
+# underlying HTTP libraries (libcurl/requests/httpx/etc.) pick it up.
+proxy_url = os.getenv("APP_PROXY_URL") or ""
+if proxy_url:
+    os.environ.setdefault("HTTP_PROXY", proxy_url)
+    os.environ.setdefault("HTTPS_PROXY", proxy_url)
+    os.environ.setdefault("http_proxy", proxy_url)
+    os.environ.setdefault("https_proxy", proxy_url)
+    # Some tools use ALL_PROXY for socks proxies
+    os.environ.setdefault("ALL_PROXY", proxy_url)
+
+from fastapi import FastAPI, Request, status, Depends
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Depends
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.core.auth import verify_api_key
 from app.core.config import get_config
@@ -55,6 +68,22 @@ async def lifespan(app: FastAPI):
     from app.core.config import config
 
     await config.load()
+
+    # If APP_PROXY_URL is set in environment and grok.base_proxy_url is not configured,
+    # inject it into runtime config so services that read get_config('grok.base_proxy_url')
+    # will pick up the proxy.
+    try:
+        env_proxy = os.getenv("APP_PROXY_URL") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+        if env_proxy:
+            from app.core.config import get_config
+
+            current = get_config("grok.base_proxy_url", "") or ""
+            if not current:
+                # best-effort: persist to config so it's visible to services
+                await config.update({"grok": {"base_proxy_url": env_proxy}})
+                logger.info("Injected grok.base_proxy_url from environment")
+    except Exception:
+        pass
 
     # 1.1 Old account post-migration settings (TOS + BirthDate + NSFW), best-effort
     async def _run_legacy_account_migration():
@@ -105,6 +134,9 @@ def create_app() -> FastAPI:
     """创建 FastAPI 应用"""
     app = FastAPI(
         title="Grok2API",
+        description="""
+Grok2API is a project that provides a RESTful API for Grok.
+""",
         lifespan=lifespan,
     )
 
@@ -119,6 +151,13 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+
+    # 会话中间件
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=os.getenv("SESSION_SECRET_KEY", "your-secret-key"),
+        max_age=3600 * 24 * 7,  # 7 天
     )
 
     # 请求日志和 ID 中间件
@@ -181,6 +220,62 @@ def create_app() -> FastAPI:
     from app.api.v1.admin import router as admin_router
 
     app.include_router(admin_router)
+
+    @app.get("/debug/proxy", include_in_schema=False)
+    async def debug_proxy(url: str | None = None):
+        """返回当前代理配置并尝试发起一次外部请求以验证代理是否被使用。"""
+        import os
+        from app.core.config import get_config
+
+        env_proxy = os.getenv("APP_PROXY_URL") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY") or ""
+        cfg_proxy = get_config("grok.base_proxy_url", "") or ""
+        probes = {"env_proxy": env_proxy, "config_proxy": cfg_proxy}
+
+        # Build proxies for request
+        proxies = {"http": env_proxy, "https": env_proxy} if env_proxy else None
+
+        target = url or "http://httpbin.org/get"
+        try:
+            # Use curl_cffi AsyncSession to make a real outgoing request
+            from curl_cffi.requests import AsyncSession
+
+            async with AsyncSession() as session:
+                resp = await session.get(target, timeout=15, proxies=proxies)
+                probes["status_code"] = resp.status_code
+                try:
+                    probes["body"] = resp.json()
+                except Exception:
+                    probes["body"] = resp.text
+        except Exception as e:
+            probes["error"] = str(e)
+
+        # Secondary probe using requests (sync) run in thread — many Python libraries
+        # (requests) honor HTTP_PROXY/HTTPS_PROXY and this helps us compare behavior.
+        try:
+            import asyncio as _asyncio
+
+            def _requests_probe():
+                try:
+                    import requests
+
+                    req_proxies = None
+                    if env_proxy:
+                        req_proxies = {"http": env_proxy, "https": env_proxy}
+                    r = requests.get("http://httpbin.org/get", timeout=10, proxies=req_proxies)
+                    try:
+                        body = r.json()
+                    except Exception:
+                        body = r.text
+                    return {"status_code": r.status_code, "body": body}
+                except Exception as ex:
+                    return {"error": str(ex)}
+
+            req_result = await _asyncio.to_thread(_requests_probe)
+            probes["requests_probe"] = req_result
+        except Exception as e:
+            probes["requests_probe_error"] = str(e)
+
+        return probes
 
     return app
 
