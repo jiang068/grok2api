@@ -7,7 +7,7 @@ app_url = ""
 # API 调用密钥
 api_key = ""
 # 启用 WebUI
-webui_enabled = false
+webui_enabled = true
 # WebUI 访问密码
 webui_key = ""
 
@@ -132,12 +132,12 @@ timeout = 60
 # ==================== 批量操作 ====================
 [batch]
 # 开启 NSFW 并发数（token 级，每个 token 需三步网络请求）
-nsfw_concurrency         = 50
+nsfw_concurrency         = 10
 # 刷新 Usage 并发数（token 级）
-refresh_concurrency      = 50
+refresh_concurrency      = 10
 # 上传 Asset 并发数（全局，API 收到附件时触发，跨所有并发请求共享）
 asset_upload_concurrency = 10
 # 查询 Asset 并发数（全局，跨所有并发请求共享）
-asset_list_concurrency   = 50
+asset_list_concurrency   = 10
 # 删除 Asset 并发数（全局，跨所有并发请求共享；也作为管理后台批量清理的 token 级默认值）
-asset_delete_concurrency = 50
+asset_delete_concurrency = 10

@@ -1,7 +1,7 @@
 """Grok2API application entry point.
 
 Start with:
-  uv run granian --interface asgi --host 0.0.0.0 --port 8000 --workers 1 app.main:app
+  uv run uvicorn app.main:app --host 127.0.0.1 --port 8200 --workers 1
 
 Multi-worker notes:
   - All workers run a lightweight account-directory sync loop (ACCOUNT_SYNC_INTERVAL env, default 30 s).
@@ -275,8 +275,12 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    logger.error(
-        "direct startup is disabled: use "
-        "uv run granian --interface asgi --host 0.0.0.0 --port 8000 app.main:app"
+    import uvicorn
+    logger.info("Starting Grok2API via Uvicorn...")
+    uvicorn.run(
+        "app.main:app", 
+        host="0.0.0.0", 
+        port=8200, 
+        workers=1,
+        log_level="info"
     )
-    raise SystemExit(1)
